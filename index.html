@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Code Playground</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #101612;
+      color: #eef4ed;
+      font: 15px system-ui, sans-serif;
+    }
+    main { max-width: 1000px; margin: auto; padding: 32px 20px; }
+    h1 { margin: 0; font-size: 28px; }
+    .hint { color: #9eada1; margin: 8px 0 24px; }
+    .panel {
+      overflow: hidden;
+      border: 1px solid #303b33;
+      border-radius: 14px;
+      background: #18211b;
+    }
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid #303b33;
+    }
+    .label { font-weight: 700; }
+    .actions { display: flex; gap: 8px; }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #run { background: #b9f36b; color: #172117; }
+    #clear { background: #303b33; color: #eef4ed; }
+    textarea {
+      display: block;
+      width: 100%;
+      min-height: 300px;
+      resize: vertical;
+      padding: 18px;
+      border: 0;
+      outline: 0;
+      background: #18211b;
+      color: #e5f1df;
+      font: 14px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+      tab-size: 2;
+    }
+    #output {
+      min-height: 100px;
+      max-height: 300px;
+      overflow: auto;
+      padding: 16px;
+      color: #d6e1d7;
+      font: 13px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .empty { color: #849287; }
+    .error { color: #ff8e8e; }
+    .success { color: #b9f36b; }
+    .footer { margin-top: 14px; color: #849287; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Code Playground</h1>
+    <p class="hint">Write JavaScript, then run it and see the output.</p>
+
+    <section class="panel">
+      <div class="bar">
+        <span class="label">JavaScript</span>
+        <div class="actions">
+          <button id="clear" type="button">Clear output</button>
+          <button id="run" type="button">▶ Run</button>
+        </div>
+      </div>
+      <textarea id="code" spellcheck="false" aria-label="JavaScript code">const message = "Hello, world!";
+console.log(message);
+
+for (let i = 1; i <= 3; i++) {
+  console.log("Count:", i);
+}</textarea>
+    </section>
+
+    <section class="panel" style="margin-top: 16px">
+      <div class="bar"><span class="label">Output</span></div>
+      <div id="output" aria-live="polite"><span class="empty">Run your code to see output here.</span></div>
+    </section>
+
+    <p class="footer">Tip: press Ctrl+Enter (or Cmd+Enter) to run your code.</p>
+    <iframe id="runner" title="Isolated code runner" sandbox="allow-scripts" hidden></iframe>
+  </main>
+
+  <script>
+    const editor = document.querySelector("#code");
+    const output = document.querySelector("#output");
+    const runner = document.querySelector("#runner");
+
+    function addLine(text, className = "") {
+      const line = document.createElement("div");
+      line.textContent = text;
+      if (className) line.className = className;
+      output.appendChild(line);
+    }
+
+    document.querySelector("#run").addEventListener("click", () => {
+      output.replaceChildren();
+      addLine("Running…", "empty");
+
+      // Escape "<" so user code cannot close the harness's script tag.
+      const source = JSON.stringify(editor.value).replace(/</g, "\\u003c");
+
+      runner.srcdoc = `<!doctype html>
+<html><body><script>
+  const userCode = ${source};
+
+  function format(value) {
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.stack || value.message;
+    try {
+      const result = JSON.stringify(value);
+      return result === undefined ? String(value) : result;
+    } catch {
+      return String(value);
+    }
+  }
+
+  function send(text, level = "log") {
+    parent.postMessage({ type: "output", text, level }, "*");
+  }
+
+  for (const level of ["log", "info", "warn", "error", "debug"]) {
+    console[level] = (...args) => send(args.map(format).join(" "), level);
+  }
+
+  window.onerror = (message, file, line, column) => {
+    send(message + " (line " + line + ")", "error");
+  };
+
+  window.onunhandledrejection = event => {
+    send("Unhandled promise: " + format(event.reason), "error");
+  };
+
+  (async () => {
+    try {
+      await new Function("return (async () => {\\n" + userCode + "\\n})()")();
+      send("Finished.", "done");
+    } catch (error) {
+      send(format(error), "error");
+      send("Finished.", "done");
+    }
+  })();
+<\/script></body></html>`;
+    });
+
+    document.querySelector("#clear").addEventListener("click", () => {
+      output.replaceChildren();
+      const empty = document.createElement("span");
+      empty.className = "empty";
+      empty.textContent = "Output cleared.";
+      output.appendChild(empty);
+    });
+
+    window.addEventListener("message", event => {
+      if (event.source !== runner.contentWindow || event.data?.type !== "output") return;
+
+      if (event.data.level === "done") {
+        const first = output.firstElementChild;
+        if (first?.textContent === "Running…") first.remove();
+        return;
+      }
+
+      addLine(event.data.text, event.data.level === "error" ? "error" : "");
+    });
+
+    editor.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        document.querySelector("#run").click();
+      }
+    });
+  </script>
+</body>
+</html>
